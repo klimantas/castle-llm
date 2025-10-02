@@ -1,6 +1,7 @@
 import subprocess
 import inspect
 import time
+import os
 
 from CybORG.Shared.Actions import *
 from openai import OpenAI
@@ -18,6 +19,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
 def wrap(env):
     # return ChallengeWrapper(env=env, agent_name='Blue')
     return BlueTableWrapper(env=env, agent='Blue')

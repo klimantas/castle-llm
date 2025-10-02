@@ -2,7 +2,7 @@ pytest
 paramiko
 pyyaml
 numpy
-gym
+gymnasium
 prettytable
 docutils
 python-dotenv
