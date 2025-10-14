@@ -2,6 +2,9 @@ import subprocess
 import inspect
 import time
 import os
+import json
+from datetime import datetime
+from pathlib import Path
 
 from CybORG.Shared.Actions import *
 from openai import OpenAI
@@ -18,8 +21,6 @@ from CybORG.Shared.Results import Results
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
 def wrap(env):
     # return ChallengeWrapper(env=env, agent_name='Blue')
     return BlueTableWrapper(env=env, agent='Blue')
@@ -143,12 +144,13 @@ def convert_model_output_to_action(output: Action, session=0):
         return Remove(hostname=output.host, agent='Blue', session=session)
     elif output.action == "RESTORE":
         return Restore(hostname=output.host, agent='Blue', session=session)
-    return None
+    return None   
 
-    
-
-if __name__ == "__main__":
-    client = OpenAI()
+def run_episode(model="gpt-5-nano", temperature=1.0, api_key=None):
+    """Run a single episode and return the total reward and action list."""
+    if api_key is None:
+        raise ValueError("API key must be provided")
+    client = OpenAI(api_key=api_key)
     scenario = 'Scenario2'
     path = str(inspect.getfile(CybORG))
     path = path[:-10] + f'/Shared/Scenarios/{scenario}.yaml'
@@ -163,34 +165,107 @@ if __name__ == "__main__":
     history = f"State: \n{str(obs)}"
     r = []
     blue_action = []
-    for i in tqdm(range(30)):
+    
+    for i in tqdm(range(30), desc="Episode steps", leave=False):
         conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
         conversation.extend([{"role": "user", "content": HUMAN_PROMPT.format(history=history)}])
-        # print("*" * 100, "prompt")
-        # print(history)
+        
         response = client.responses.parse(
-                model = "gpt-4.1",
+                model = "gpt-5-nano",
                 temperature=1.0,
                 input=conversation,
                 text_format=Action,
             )
         output = response.output_parsed
         action = convert_model_output_to_action(output)
-        # print("^" * 100)
-        # print(output)
-        # print('-' * 40)
-        results = env.step(action=action,agent='Blue')
+        
+        results = env.step(action=action, agent='Blue')
         obs, reward, done, action_space = results.observation, results.reward, results.done, results.action_space
         obs.del_column("Subnet")
         obs.del_column("IP Address")
-        # print(results)
+        
         history = f"{history}\nAction: {results.action}\nReward: {results.reward}\nState: {obs}"
         r.append(results.reward)
         blue_action.append(results.action)
-        # print()
-        # print()
-        # print()
-    print(r)
-    print(blue_action)
-    print(sum(r))
+    
+    return sum(r), r, blue_action
+
+if __name__ == "__main__":
+    load_dotenv(dotenv_path="/Users/klimanta/Documents/GitHub/castle-llm/openai_key.env")
+    api_key = os.getenv("OPENAI_API_KEY")
+    print("Loaded API Key:", api_key)
+    model = "gpt-5-nano"
+    temp = 1.0
+
+    num_runs = 3
+    all_rewards = []
+    
+    # Create results directory if it doesn't exist
+    results_dir = Path(__file__).parent / "results"
+    results_dir.mkdir(exist_ok=True)
+    
+    # Prepare results log
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    results_log = {
+        "timestamp": timestamp,
+        "agent_name": "LLM_Agent_GPT-5-nano",
+        "scenario": "Scenario2",
+        "num_runs": num_runs,
+        "num_steps_per_run": 30,
+        "model": model,
+        "temperature": temp,
+        "runs": []
+    }
+    
+    print(f"\n{'='*60}")
+    print(f"Running {num_runs} episodes of LLM Agent")
+    print(f"{'='*60}\n")
+    
+    for run in range(num_runs):
+        print(f"\n{'─'*60}")
+        print(f"Run {run + 1}/{num_runs}")
+        print(f"{'─'*60}")
+        
+        total_reward, step_rewards, actions = run_episode(model=model, temperature=temp, api_key=api_key)
+        all_rewards.append(total_reward)
+        
+        # Store run data
+        results_log["runs"].append({
+            "run_number": run + 1,
+            "total_reward": total_reward,
+            "step_rewards": step_rewards,
+            "actions": [str(a) for a in actions]
+        })
+        
+        print(f"\n✓ Run {run + 1} completed")
+        print(f"  Total Reward: {total_reward:.2f}")
+        print(f"  Step Rewards: {step_rewards}")
+    
+    # Calculate statistics
+    results_log["statistics"] = {
+        "mean_reward": mean(all_rewards),
+        "stdev_reward": stdev(all_rewards) if len(all_rewards) > 1 else None,
+        "min_reward": min(all_rewards),
+        "max_reward": max(all_rewards),
+        "all_total_rewards": all_rewards
+    }
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print("SUMMARY")
+    print(f"{'='*60}")
+    print(f"All Total Rewards: {all_rewards}")
+    print(f"Average Reward: {results_log['statistics']['mean_reward']:.2f}")
+    if results_log['statistics']['stdev_reward'] is not None:
+        print(f"Std Dev: {results_log['statistics']['stdev_reward']:.2f}")
+    print(f"Min Reward: {results_log['statistics']['min_reward']:.2f}")
+    print(f"Max Reward: {results_log['statistics']['max_reward']:.2f}")
+    
+    # Save to file
+    filename = results_dir / f"{timestamp}_LLM_Agent.json"
+    with open(filename, 'w') as f:
+        json.dump(results_log, f, indent=2)
+    
+    print(f"\n✓ Results saved to: {filename}")
+    print(f"{'='*60}\n")
 

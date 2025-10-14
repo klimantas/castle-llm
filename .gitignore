@@ -29,7 +29,5 @@ CybORG/Shared/Config/config.ini
 CybORG/Emulator/AWS/Config/awsconfig.ini
 
 *.swp
-
-# Environment files with secrets
 openai_key.env
 *.env
