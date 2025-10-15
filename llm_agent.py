@@ -21,17 +21,52 @@ from CybORG.Shared.Results import Results
 from dotenv import load_dotenv
 from tqdm import tqdm
 
+
 def wrap(env):
     # return ChallengeWrapper(env=env, agent_name='Blue')
-    return BlueTableWrapper(env=env, agent='Blue')
+    return BlueTableWrapper(env=env, agent="Blue")
+
 
 def get_git_revision_hash() -> str:
-    return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+    return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+
 
 class Action(BaseModel):
     analyse: str = Field(description="Think step by step")
-    action: Literal["MONITOR", "ANALYSE", "DECOY_APACHE", "DECOY_FEMITTER", "DecoyHarakaSMPT", "DECOY_SMSS", "DECOY_SSHD", "DECOY_SVCHOST", "DECOY_TOMCAT", "DECOY_VSFTPD", "REMOVE", "RESTORE", "SLEEP"]
-    host: Literal["Enterprise0", "Enterprise1", "Enterprise2", "Op_Host0", "Op_Host1", "Op_Host2", "Op_Server0", "User0", "User1", "User2", "User3", "User4", "nohost"] = Field(default="nohost", description="Host to perform the action on. Default is 'nohost' for actions that do not require a host argument.")
+    action: Literal[
+        "MONITOR",
+        "ANALYSE",
+        "DECOY_APACHE",
+        "DECOY_FEMITTER",
+        "DecoyHarakaSMPT",
+        "DECOY_SMSS",
+        "DECOY_SSHD",
+        "DECOY_SVCHOST",
+        "DECOY_TOMCAT",
+        "DECOY_VSFTPD",
+        "REMOVE",
+        "RESTORE",
+        "SLEEP",
+    ]
+    host: Literal[
+        "Enterprise0",
+        "Enterprise1",
+        "Enterprise2",
+        "Op_Host0",
+        "Op_Host1",
+        "Op_Host2",
+        "Op_Server0",
+        "User0",
+        "User1",
+        "User2",
+        "User3",
+        "User4",
+        "nohost",
+    ] = Field(
+        default="nohost",
+        description="Host to perform the action on. Default is 'nohost' for actions that do not require a host argument.",
+    )
+
 
 SYSTEM_PROMPT = """
 You are a Blue-team autonomous cyber defense agent in a simulated enterprise network under attack by a Red agent. Your goal is to prevent unauthorized access, preserve critical infrastructure, and minimize damage.
@@ -113,159 +148,191 @@ History:
 Action:
 """
 
+
 # - Use REMOVE/RESTORE only when necessary, as they are costly.
 def convert_model_output_to_action(output: Action, session=0):
     """
     Convert the model output string to an Action object.
     """
-    if output.action == "SLEEP": 
+    if output.action == "SLEEP":
         return Sleep()
     elif output.action == "MONITOR":
-        return Monitor(agent='Blue', session=session)   
+        return Monitor(agent="Blue", session=session)
     elif output.action == "ANALYSE":
-        return Analyse(hostname=output.host, agent='Blue', session=session)
+        return Analyse(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_APACHE":
-        return DecoyApache(hostname=output.host, agent='Blue', session=session)
-    elif output.action == "DECOY_FEMITTER":   
-        return DecoyFemitter(hostname=output.host, agent='Blue', session=session)
+        return DecoyApache(hostname=output.host, agent="Blue", session=session)
+    elif output.action == "DECOY_FEMITTER":
+        return DecoyFemitter(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_HARAKASMTP":
-        return DecoyHarakaSMPT(hostname=output.host, agent='Blue', session=session)
+        return DecoyHarakaSMPT(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_SMSS":
-        return DecoySmss(hostname=output.host, agent='Blue', session=session)
+        return DecoySmss(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_SSHD":
-        return DecoySSHD(hostname=output.host, agent='Blue', session=session)
+        return DecoySSHD(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_SVCHOST":
-        return DecoySvchost(hostname=output.host, agent='Blue', session=session)
+        return DecoySvchost(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_TOMCAT":
-        return DecoyTomcat(hostname=output.host, agent='Blue', session=session)
+        return DecoyTomcat(hostname=output.host, agent="Blue", session=session)
     elif output.action == "DECOY_VSFTPD":
-        return DecoyVsftpd(hostname=output.host, agent='Blue', session=session)
+        return DecoyVsftpd(hostname=output.host, agent="Blue", session=session)
     elif output.action == "REMOVE":
-        return Remove(hostname=output.host, agent='Blue', session=session)
+        return Remove(hostname=output.host, agent="Blue", session=session)
     elif output.action == "RESTORE":
-        return Restore(hostname=output.host, agent='Blue', session=session)
-    return None   
+        return Restore(hostname=output.host, agent="Blue", session=session)
+    return None
+
 
 def run_episode(model="gpt-5-nano", temperature=1.0, api_key=None):
     """Run a single episode and return the total reward and action list."""
     if api_key is None:
         raise ValueError("API key must be provided")
     client = OpenAI(api_key=api_key)
-    scenario = 'Scenario2'
+    scenario = "Scenario2"
     path = str(inspect.getfile(CybORG))
-    path = path[:-10] + f'/Shared/Scenarios/{scenario}.yaml'
+    path = path[:-10] + f"/Shared/Scenarios/{scenario}.yaml"
 
-    cyborg = CybORG(path, 'sim', agents={'Red': RedMeanderAgent})
+    cyborg = CybORG(path, "sim", agents={"Red": RedMeanderAgent})
     env = BlueTableWrapper(cyborg)
-    
-    results = env.reset(agent='Blue')
-    obs, reward, done, action_space = results.observation, results.reward, results.done, results.action_space
+
+    results = env.reset(agent="Blue")
+    obs, reward, done, action_space = (
+        results.observation,
+        results.reward,
+        results.done,
+        results.action_space,
+    )
     obs.del_column("Subnet")
     obs.del_column("IP Address")
     history = f"State: \n{str(obs)}"
     r = []
     blue_action = []
-    
+
     for i in tqdm(range(30), desc="Episode steps", leave=False):
         conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
-        conversation.extend([{"role": "user", "content": HUMAN_PROMPT.format(history=history)}])
-        
+        conversation.extend(
+            [{"role": "user", "content": HUMAN_PROMPT.format(history=history)}]
+        )
+
         response = client.responses.parse(
-                model = "gpt-5-nano",
-                temperature=1.0,
-                input=conversation,
-                text_format=Action,
-            )
+            model="gpt-5-nano",
+            temperature=1.0,
+            input=conversation,
+            text_format=Action,
+        )
         output = response.output_parsed
         action = convert_model_output_to_action(output)
-        
-        results = env.step(action=action, agent='Blue')
-        obs, reward, done, action_space = results.observation, results.reward, results.done, results.action_space
+
+        results = env.step(action=action, agent="Blue")
+        obs, reward, done, action_space = (
+            results.observation,
+            results.reward,
+            results.done,
+            results.action_space,
+        )
         obs.del_column("Subnet")
         obs.del_column("IP Address")
-        
+
         history = f"{history}\nAction: {results.action}\nReward: {results.reward}\nState: {obs}"
         r.append(results.reward)
         blue_action.append(results.action)
-    
+
     return sum(r), r, blue_action
 
+
 if __name__ == "__main__":
-    load_dotenv(dotenv_path="/Users/klimanta/Documents/GitHub/castle-llm/openai_key.env")
+    load_dotenv(
+        dotenv_path="/Users/klimanta/Documents/GitHub/castle-llm/openai_key.env"
+    )
     api_key = os.getenv("OPENAI_API_KEY")
     print("Loaded API Key:", api_key)
-    model = "gpt-5-nano"
-    temp = 1.0
 
-    num_runs = 3
-    all_rewards = []
-    
-    # Create results directory if it doesn't exist
-    results_dir = Path(__file__).parent / "results"
-    results_dir.mkdir(exist_ok=True)
-    
-    # Prepare results log
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    results_log = {
-        "timestamp": timestamp,
-        "agent_name": "LLM_Agent_GPT-5-nano",
-        "scenario": "Scenario2",
-        "num_runs": num_runs,
-        "num_steps_per_run": 30,
-        "model": model,
-        "temperature": temp,
-        "runs": []
-    }
-    
-    print(f"\n{'='*60}")
-    print(f"Running {num_runs} episodes of LLM Agent")
-    print(f"{'='*60}\n")
-    
-    for run in range(num_runs):
-        print(f"\n{'─'*60}")
-        print(f"Run {run + 1}/{num_runs}")
-        print(f"{'─'*60}")
-        
-        total_reward, step_rewards, actions = run_episode(model=model, temperature=temp, api_key=api_key)
-        all_rewards.append(total_reward)
-        
-        # Store run data
-        results_log["runs"].append({
-            "run_number": run + 1,
-            "total_reward": total_reward,
-            "step_rewards": step_rewards,
-            "actions": [str(a) for a in actions]
-        })
-        
-        print(f"\n✓ Run {run + 1} completed")
-        print(f"  Total Reward: {total_reward:.2f}")
-        print(f"  Step Rewards: {step_rewards}")
-    
-    # Calculate statistics
-    results_log["statistics"] = {
-        "mean_reward": mean(all_rewards),
-        "stdev_reward": stdev(all_rewards) if len(all_rewards) > 1 else None,
-        "min_reward": min(all_rewards),
-        "max_reward": max(all_rewards),
-        "all_total_rewards": all_rewards
-    }
-    
-    # Print summary
-    print(f"\n{'='*60}")
-    print("SUMMARY")
-    print(f"{'='*60}")
-    print(f"All Total Rewards: {all_rewards}")
-    print(f"Average Reward: {results_log['statistics']['mean_reward']:.2f}")
-    if results_log['statistics']['stdev_reward'] is not None:
-        print(f"Std Dev: {results_log['statistics']['stdev_reward']:.2f}")
-    print(f"Min Reward: {results_log['statistics']['min_reward']:.2f}")
-    print(f"Max Reward: {results_log['statistics']['max_reward']:.2f}")
-    
-    # Save to file
-    filename = results_dir / f"{timestamp}_LLM_Agent.json"
-    with open(filename, 'w') as f:
-        json.dump(results_log, f, indent=2)
-    
-    print(f"\n✓ Results saved to: {filename}")
-    print(f"{'='*60}\n")
+    models = [
+        # "gpt-5-nano",
+        "gpt-4.1-nano",
+        "gpt-4o-mini",
+        "gpt-5-mini",
+        "gpt-4.1-mini",
+        "gpt-3.5-turbo",
+    ]
+    for model in models:
+        print("\n" + "=" * 80 + "\n")
+        print(f"Starting runs for model: {model}")
+        model = model
+        temp = 1.0
 
+        num_runs = 3
+        all_rewards = []
+
+        # Create results directory if it doesn't exist
+        results_dir = Path(__file__).parent / "results"
+        results_dir.mkdir(exist_ok=True)
+
+        # Prepare results log
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_log = {
+            "timestamp": timestamp,
+            "agent_name": "LLM_Agent_GPT-5-nano",
+            "scenario": "Scenario2",
+            "num_runs": num_runs,
+            "num_steps_per_run": 30,
+            "model": model,
+            "temperature": temp,
+            "runs": [],
+        }
+
+        print(f"\n{'='*60}")
+        print(f"Running {num_runs} episodes of {model}")
+        print(f"{'='*60}\n")
+
+        for run in range(num_runs):
+            print(f"\n{'─'*60}")
+            print(f"Run {run + 1}/{num_runs}")
+            print(f"{'─'*60}")
+
+            total_reward, step_rewards, actions = run_episode(
+                model=model, temperature=temp, api_key=api_key
+            )
+            all_rewards.append(total_reward)
+
+            # Store run data
+            results_log["runs"].append(
+                {
+                    "run_number": run + 1,
+                    "total_reward": total_reward,
+                    "step_rewards": step_rewards,
+                    "actions": [str(a) for a in actions],
+                }
+            )
+
+            print(f"\n✓ Run {run + 1} completed")
+            print(f"  Total Reward: {total_reward:.2f}")
+            print(f"  Step Rewards: {step_rewards}")
+
+        # Calculate statistics
+        results_log["statistics"] = {
+            "mean_reward": mean(all_rewards),
+            "stdev_reward": stdev(all_rewards) if len(all_rewards) > 1 else None,
+            "min_reward": min(all_rewards),
+            "max_reward": max(all_rewards),
+            "all_total_rewards": all_rewards,
+        }
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print("SUMMARY")
+        print(f"{'='*60}")
+        print(f"All Total Rewards: {all_rewards}")
+        print(f"Average Reward: {results_log['statistics']['mean_reward']:.2f}")
+        if results_log["statistics"]["stdev_reward"] is not None:
+            print(f"Std Dev: {results_log['statistics']['stdev_reward']:.2f}")
+        print(f"Min Reward: {results_log['statistics']['min_reward']:.2f}")
+        print(f"Max Reward: {results_log['statistics']['max_reward']:.2f}")
+
+        # Save to file
+        filename = results_dir / f"{timestamp}_LLM_Agent.json"
+        with open(filename, "w") as f:
+            json.dump(results_log, f, indent=2)
+
+        print(f"\n✓ Results saved to: {filename}")
+        print(f"{'='*60}\n")
