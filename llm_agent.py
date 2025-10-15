@@ -256,7 +256,7 @@ if __name__ == "__main__":
         "gpt-3.5-turbo",
     ]
     for model in models:
-        print("\n" + "=" * 80 + "\n")
+        print("\n" + "=" * 60 + "\n")
         print(f"Starting runs for model: {model}")
         model = model
         temp = 1.0
