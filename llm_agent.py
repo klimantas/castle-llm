@@ -272,7 +272,7 @@ if __name__ == "__main__":
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_log = {
             "timestamp": timestamp,
-            "agent_name": "LLM_Agent_GPT-5-nano",
+            "agent_name": "LLM_Agent",
             "scenario": "Scenario2",
             "num_runs": num_runs,
             "num_steps_per_run": 30,

@@ -1,6 +1,6 @@
 {
   "timestamp": "20251014_211346",
-  "agent_name": "LLM_Agent_GPT-5-nano",
+  "agent_name": "LLM_Agent",
   "scenario": "Scenario2",
   "num_runs": 3,
   "num_steps_per_run": 30,
