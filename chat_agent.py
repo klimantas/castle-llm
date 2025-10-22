@@ -6,7 +6,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from openai import OpenAI
+from langchain_dartmouth.llms import ChatDartmouth
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 
 from CybORG.Shared.Actions import *
 from typing import Literal
@@ -31,7 +33,7 @@ def wrap(env):
 def get_git_revision_hash() -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
 
-# Using Pydantic to define the expected structure of the model output
+
 class Action(BaseModel):
     analyse: str = Field(description="Think step by step")
     action: Literal[
@@ -185,7 +187,7 @@ def convert_model_output_to_action(output: Action, session=0):
 
 
 def run_episode(
-    model="gpt-4.1",
+    model="llama-3.3-70b",
     temperature=1.0,
     api_key=None,
     red_agent=RedMeanderAgent,
@@ -194,7 +196,25 @@ def run_episode(
     """Run a single episode and return the total reward, blue and red action list, and number of impacts."""
     if api_key is None:
         raise ValueError("API key must be provided")
-    client = OpenAI(api_key=api_key)
+
+    # Create ChatDartmouth LLM
+    chat = ChatDartmouth(
+        dartmouth_chat_api_key=api_key, model_name=model, temperature=temperature
+    )
+
+    # Create output parser for structured output
+    parser = PydanticOutputParser(pydantic_object=Action)
+
+    # Create prompt template with format instructions
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", SYSTEM_PROMPT + "\n\n{format_instructions}"),
+            ("user", HUMAN_PROMPT),
+        ]
+    )
+
+    # Create the chain: prompt -> llm -> parser
+    chain = prompt | chat | parser
 
     scenario = "Scenario2"
     path = str(inspect.getfile(CybORG))
@@ -220,19 +240,23 @@ def run_episode(
     impacts = 0
 
     for i in tqdm(range(steps), desc="Episode steps", leave=False):
-        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
-        conversation.extend(
-            [{"role": "user", "content": HUMAN_PROMPT.format(history=history)}]
-        )
+        # Use LangChain chain to get structured output
+        try:
+            output = chain.invoke(
+                {
+                    "history": history,
+                    "format_instructions": parser.get_format_instructions(),
+                }
+            )
+        except Exception as e:
+            print(f"\nError getting structured output: {e}")
+            # Fallback to MONITOR action if parsing fails
+            output = Action(
+                analyse="Error occurred, monitoring network",
+                action="MONITOR",
+                host="nohost",
+            )
 
-        response = client.responses.parse(
-            model=model,
-            temperature=1.0,
-            input=conversation,
-            text_format=Action,
-        )
-
-        output = response.output_parsed
         action = convert_model_output_to_action(output)
 
         results = env.step(action=action, agent="Blue")
@@ -258,10 +282,11 @@ def run_episode(
 
 
 if __name__ == "__main__":
-    loaded = load_dotenv(dotenv_path="openai_key.env")
-    print("Loaded OpenAI dotenv:", loaded)
-    api_key = os.getenv("OPENAI_API_KEY")
-    print("Loaded API Key:", api_key)
+    # Load Dartmouth API key
+    loaded = load_dotenv(dotenv_path="dartmouth_key.env")
+    print("Loaded Dartmouth dotenv:", loaded)
+    chat_key = os.getenv("DARTMOUTH_CHAT_API_KEY")
+    print("Loaded Dartmouth Chat API Key:", chat_key)
 
     # Create results directory if it doesn't exist
     results_dir = Path(__file__).parent / "results"
@@ -274,22 +299,19 @@ if __name__ == "__main__":
     experiment_dir = results_dir / f"results_{experiment_version}_{yearMonth}"
     experiment_dir.mkdir(exist_ok=True)
 
+    # Dartmouth Chat models (adjust based on available models)
     models = [
-        "gpt-5-nano",
-        "gpt-4.1-nano",
-        "gpt-4o-mini",
-        "gpt-5-mini",
-        "gpt-4.1-mini",
-        # "gpt-3.5-turbo",
-        "gpt-4.1",
+        "openai.gpt-oss-120b",
+        # Add other Dartmouth-supported models here
     ]
+
     for model in models:
         temp = 1.0
         red_agent = RedMeanderAgent
         # red_agent = B_lineAgent
 
         episodes = 3
-        steps = 50
+        steps = 30
         all_rewards = []
         all_impacts = []
 
@@ -320,7 +342,7 @@ if __name__ == "__main__":
             total_reward, step_rewards, actions, red_actions, impacts = run_episode(
                 model=model,
                 temperature=temp,
-                api_key=api_key,
+                api_key=chat_key,  # Use Dartmouth Chat API key instead of OpenAI key
                 red_agent=red_agent,
                 steps=steps,
             )

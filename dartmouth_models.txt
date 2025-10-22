@@ -1,0 +1,22 @@
+Dartmouth Chat Models
+Retrieved: 2025-10-20
+==================================================
+
+openai.gpt-4.1-mini-2025-04-14
+openai.gpt-4.1-2025-04-14
+openai_responses.gpt-5-mini-2025-08-07
+openai_responses.gpt-5-2025-08-07
+anthropic.claude-3-5-haiku-20241022
+anthropic.claude-haiku-4-5-20251001
+anthropic.claude-3-7-sonnet-20250219
+anthropic.claude-sonnet-4-20250514
+anthropic.claude-sonnet-4-5-20250929
+google_genai.gemini-2.0-flash-001
+google_genai.gemini-2.5-flash
+google_genai.gemini-2.5-pro
+mistral.mistral-medium-2508
+mistral.pixtral-large-2411
+openai.gpt-oss-120b
+google.gemma-3-27b-it
+meta.llama-3.2-11b-vision-instruct
+meta.llama-3-2-3b-instruct
