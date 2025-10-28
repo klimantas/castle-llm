@@ -11,8 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
 from CybORG.Shared.Actions import *
-from typing import Literal
-from pydantic import BaseModel, Field
+from typing import Literal, Optional
+from pydantic import BaseModel, Field, constr
 from pprint import pprint
 from statistics import mean, stdev
 from CybORG import CybORG, CYBORG_VERSION
@@ -35,7 +35,9 @@ def get_git_revision_hash() -> str:
 
 
 class Action(BaseModel):
-    analyse: str = Field(description="Think step by step")
+    analyse: Optional[constr(max_length=200)] = Field(
+        None, description="Optional short reasoning (<=200 chars)"
+    )
     action: Literal[
         "MONITOR",
         "ANALYSE",
@@ -112,15 +114,10 @@ Your goal is to:
 - Remove Red presence when possible.
 - Restore compromised hosts to maintain network integrity (Compromised value: Privileged).
 
-When prompted for action, return exactly one line in this format:
-ACTION_NAME(optional_host_argument)
+IMPORTANT: You must respond with ONLY a valid JSON object matching the provided schema. Do not include any additional text or explanation outside the JSON.
 
-Examples:
-- MONITOR
-- ANALYSE(Host_5)
-- DECOY_SSHD(Host_2)
-- REMOVE(Host_4)
-- SLEEP
+Example response:
+{{"action": "MONITOR", "host": "nohost"}}
 
 NOTE: The final reward is the accumulated score over all time-steps, which is the sum of the rewards received at each step.
 Table 1 Blue rewards for red administrator access (per turn)
@@ -157,37 +154,39 @@ def convert_model_output_to_action(output: Action, session=0):
     """
     Convert the model output string to an Action object.
     """
-    if output.action == "SLEEP":
+    action_upper = output.action.upper()
+    
+    if action_upper == "SLEEP":
         return Sleep()
-    elif output.action == "MONITOR":
+    elif action_upper == "MONITOR":
         return Monitor(agent="Blue", session=session)
-    elif output.action == "ANALYSE":
+    elif action_upper == "ANALYSE":
         return Analyse(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_APACHE":
+    elif action_upper == "DECOY_APACHE":
         return DecoyApache(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_FEMITTER":
+    elif action_upper == "DECOY_FEMITTER":
         return DecoyFemitter(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_HARAKASMTP":
+    elif action_upper == "DECOY_HARAKASMTP":
         return DecoyHarakaSMPT(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_SMSS":
+    elif action_upper == "DECOY_SMSS":
         return DecoySmss(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_SSHD":
+    elif action_upper == "DECOY_SSHD":
         return DecoySSHD(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_SVCHOST":
+    elif action_upper == "DECOY_SVCHOST":
         return DecoySvchost(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_TOMCAT":
+    elif action_upper == "DECOY_TOMCAT":
         return DecoyTomcat(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "DECOY_VSFTPD":
+    elif action_upper == "DECOY_VSFTPD":
         return DecoyVsftpd(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "REMOVE":
+    elif action_upper == "REMOVE":
         return Remove(hostname=output.host, agent="Blue", session=session)
-    elif output.action == "RESTORE":
+    elif action_upper == "RESTORE":
         return Restore(hostname=output.host, agent="Blue", session=session)
     return None
 
 
 def run_episode(
-    model="llama-3.3-70b",
+    model="openai.gpt-oss-120b",
     temperature=1.0,
     api_key=None,
     red_agent=RedMeanderAgent,
@@ -199,7 +198,10 @@ def run_episode(
 
     # Create ChatDartmouth LLM
     chat = ChatDartmouth(
-        dartmouth_chat_api_key=api_key, model_name=model, temperature=temperature
+        dartmouth_chat_api_key=api_key,
+        model_name=model,
+        temperature=temperature,
+        max_tokens=8192,
     )
 
     # Create output parser for structured output
@@ -242,17 +244,40 @@ def run_episode(
     for i in tqdm(range(steps), desc="Episode steps", leave=False):
         # Use LangChain chain to get structured output
         try:
-            output = chain.invoke(
-                {
-                    "history": history,
-                    "format_instructions": parser.get_format_instructions(),
-                }
+            # Get raw response first to capture what the LLM actually returns
+            raw_response = chat.invoke(
+                prompt.format_messages(
+                    history=history,
+                    format_instructions=parser.get_format_instructions()
+                )
             )
+            response_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
+            
+            # Print the raw response
+            print(f"\n[Step {i+1}] Raw LLM Response:")
+            print(f"{response_text[:200]}{'...' if len(response_text) > 200 else ''}")
+            
+            # Normalize the action field to uppercase before parsing
+            # This handles models that return lowercase actions
+            try:
+                response_json = json.loads(response_text)
+                if 'action' in response_json and isinstance(response_json['action'], str):
+                    response_json['action'] = response_json['action'].upper()
+                response_text = json.dumps(response_json)
+            except json.JSONDecodeError:
+                # If not valid JSON, let the parser handle the error
+                pass
+            
+            # Parse the response
+            output = parser.parse(response_text)
+            
+            print(f"[Step {i+1}] Parsed: action={output.action}, host={output.host}")
+            
         except Exception as e:
-            print(f"\nError getting structured output: {e}")
+            print(f"\n[Step {i+1}] Error getting structured output: {e}")
             # Fallback to MONITOR action if parsing fails
             output = Action(
-                analyse="Error occurred, monitoring network",
+                analyse=None,
                 action="MONITOR",
                 host="nohost",
             )
@@ -293,7 +318,7 @@ if __name__ == "__main__":
     results_dir.mkdir(exist_ok=True)
 
     # Create experiment folder under "results" with current experiment version and timestamp
-    experiment_version = "v0-0-0"
+    experiment_version = "v0-0-1"
     yearMonth = datetime.now().strftime("%Y%m")
 
     experiment_dir = results_dir / f"results_{experiment_version}_{yearMonth}"
@@ -301,8 +326,10 @@ if __name__ == "__main__":
 
     # Dartmouth Chat models (adjust based on available models)
     models = [
-        "openai.gpt-oss-120b",
-        # Add other Dartmouth-supported models here
+        # "openai.gpt-oss-120b",
+        "google.gemma-3-27b-it",
+        "mistral.mistral-medium-2508",
+        "anthropic.claude-haiku-4-5-20251001"
     ]
 
     for model in models:
