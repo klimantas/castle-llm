@@ -1,3 +1,4 @@
+from curses import raw
 import subprocess
 import inspect
 import time
@@ -254,18 +255,31 @@ def run_episode(
             response_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
             
             # Print the raw response
-            print(f"\n[Step {i+1}] Raw LLM Response:")
-            print(f"{response_text[:200]}{'...' if len(response_text) > 200 else ''}")
+            print(f"\n[Step {i+1}] Raw LLM Response:\n{response_text}")
+            
+            # Strip markdown code blocks if present
+            if response_text.strip().startswith('```'):
+                # Remove opening ```json or ``` and closing ```
+                lines = response_text.strip().split('\n')
+                if lines[0].startswith('```'):
+                    lines = lines[1:]  # Remove first line
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]  # Remove last line
+                response_text = '\n'.join(lines)
+                print(f"[Step {i+1}] Stripped markdown, cleaned text:\n{response_text}")
             
             # Normalize the action field to uppercase before parsing
             # This handles models that return lowercase actions
             try:
                 response_json = json.loads(response_text)
+                print(f"[Step {i+1}] Parsed JSON before normalization: {response_json}")
                 if 'action' in response_json and isinstance(response_json['action'], str):
                     response_json['action'] = response_json['action'].upper()
+                    print(f"[Step {i+1}] Normalized action to: {response_json['action']}")
                 response_text = json.dumps(response_json)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
                 # If not valid JSON, let the parser handle the error
+                print(f"[Step {i+1}] JSONDecodeError: {e}")
                 pass
             
             # Parse the response
@@ -324,12 +338,11 @@ if __name__ == "__main__":
     experiment_dir = results_dir / f"results_{experiment_version}_{yearMonth}"
     experiment_dir.mkdir(exist_ok=True)
 
-    # Dartmouth Chat models (adjust based on available models)
+    # Dartmouth Chat models (adjust based on available models, free models only)
     models = [
         # "openai.gpt-oss-120b",
         "google.gemma-3-27b-it",
         "mistral.mistral-medium-2508",
-        "anthropic.claude-haiku-4-5-20251001"
     ]
 
     for model in models:

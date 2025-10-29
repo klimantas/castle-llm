@@ -200,7 +200,7 @@ def run_episode(
     path = str(inspect.getfile(CybORG))
     path = path[:-10] + f"/Shared/Scenarios/{scenario}.yaml"
 
-    cyborg = CybORG(path, "sim", agents={"Red": red_agent})  # Comment out one
+    cyborg = CybORG(path, "sim", agents={"Red": red_agent})  
     env = BlueTableWrapper(cyborg)
 
     results = env.reset(agent="Blue")
