@@ -280,7 +280,6 @@ if __name__ == "__main__":
         "gpt-4o-mini",
         "gpt-5-mini",
         "gpt-4.1-mini",
-        # "gpt-3.5-turbo",
         "gpt-4.1",
     ]
     for model in models:
@@ -289,7 +288,7 @@ if __name__ == "__main__":
         # red_agent = B_lineAgent
 
         episodes = 3
-        steps = 50
+        steps = 100
         all_rewards = []
         all_impacts = []
 
