@@ -284,11 +284,11 @@ if __name__ == "__main__":
     ]
     for model in models:
         temp = 1.0
-        red_agent = RedMeanderAgent
-        # red_agent = B_lineAgent
+        # red_agent = RedMeanderAgent
+        red_agent = B_lineAgent
 
         episodes = 3
-        steps = 100
+        steps = 50
         all_rewards = []
         all_impacts = []
 
