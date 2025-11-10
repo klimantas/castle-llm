@@ -288,7 +288,7 @@ if __name__ == "__main__":
         red_agent = B_lineAgent
 
         episodes = 3
-        steps = 50
+        steps = 100
         all_rewards = []
         all_impacts = []
 
