@@ -1,4 +1,3 @@
-from curses import raw
 import subprocess
 import inspect
 import time
@@ -7,13 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from langchain_dartmouth.llms import ChatDartmouth
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
+from openai import OpenAI
 
 from CybORG.Shared.Actions import *
-from typing import Literal, Optional
-from pydantic import BaseModel, Field, constr
+from typing import Literal
+from pydantic import BaseModel, Field
 from pprint import pprint
 from statistics import mean, stdev
 from CybORG import CybORG, CYBORG_VERSION
@@ -34,11 +31,9 @@ def wrap(env):
 def get_git_revision_hash() -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
 
-
+# Using Pydantic to define the expected structure of the model output
 class Action(BaseModel):
-    analyse: Optional[constr(max_length=200)] = Field(
-        None, description="Optional short reasoning (<=200 chars)"
-    )
+    reasoning: str = Field(description="Explain your decision-making process step by step")
     action: Literal[
         "MONITOR",
         "ANALYSE",
@@ -55,6 +50,7 @@ class Action(BaseModel):
         "SLEEP",
     ]
     host: Literal[
+        "Defender",
         "Enterprise0",
         "Enterprise1",
         "Enterprise2",
@@ -115,10 +111,10 @@ Your goal is to:
 - Remove Red presence when possible.
 - Restore compromised hosts to maintain network integrity (Compromised value: Privileged).
 
-IMPORTANT: You must respond with ONLY a valid JSON object matching the provided schema. Do not include any additional text or explanation outside the JSON.
+IMPORTANT: You must respond with a valid JSON object matching the provided schema. The response will be automatically parsed into the required format.
 
 Example response:
-{{"action": "MONITOR", "host": "nohost"}}
+{{"action": "MONITOR", "host": "nohost", "reasoning": "Scanning network for threats"}}
 
 NOTE: The final reward is the accumulated score over all time-steps, which is the sum of the rewards received at each step.
 Table 1 Blue rewards for red administrator access (per turn)
@@ -159,35 +155,35 @@ def convert_model_output_to_action(output: Action, session=0):
     
     if action_upper == "SLEEP":
         return Sleep()
-    elif action_upper == "MONITOR":
+    elif output.action == "MONITOR":
         return Monitor(agent="Blue", session=session)
-    elif action_upper == "ANALYSE":
+    elif output.action == "ANALYSE":
         return Analyse(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_APACHE":
+    elif output.action == "DECOY_APACHE":
         return DecoyApache(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_FEMITTER":
+    elif output.action == "DECOY_FEMITTER":
         return DecoyFemitter(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_HARAKASMTP":
+    elif output.action == "DECOY_HARAKASMTP":
         return DecoyHarakaSMPT(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_SMSS":
+    elif output.action == "DECOY_SMSS":
         return DecoySmss(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_SSHD":
+    elif output.action == "DECOY_SSHD":
         return DecoySSHD(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_SVCHOST":
+    elif output.action == "DECOY_SVCHOST":
         return DecoySvchost(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_TOMCAT":
+    elif output.action == "DECOY_TOMCAT":
         return DecoyTomcat(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "DECOY_VSFTPD":
+    elif output.action == "DECOY_VSFTPD":
         return DecoyVsftpd(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "REMOVE":
+    elif output.action == "REMOVE":
         return Remove(hostname=output.host, agent="Blue", session=session)
-    elif action_upper == "RESTORE":
+    elif output.action == "RESTORE":
         return Restore(hostname=output.host, agent="Blue", session=session)
     return None
 
 
 def run_episode(
-    model="openai.gpt-oss-120b",
+    model="gpt-4.1",
     temperature=1.0,
     api_key=None,
     red_agent=RedMeanderAgent,
@@ -196,34 +192,13 @@ def run_episode(
     """Run a single episode and return the total reward, blue and red action list, and number of impacts."""
     if api_key is None:
         raise ValueError("API key must be provided")
-
-    # Create ChatDartmouth LLM
-    chat = ChatDartmouth(
-        dartmouth_chat_api_key=api_key,
-        model_name=model,
-        temperature=temperature,
-        max_tokens=8192,
-    )
-
-    # Create output parser for structured output
-    parser = PydanticOutputParser(pydantic_object=Action)
-
-    # Create prompt template with format instructions
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", SYSTEM_PROMPT + "\n\n{format_instructions}"),
-            ("user", HUMAN_PROMPT),
-        ]
-    )
-
-    # Create the chain: prompt -> llm -> parser
-    chain = prompt | chat | parser
+    client = OpenAI(api_key=api_key)
 
     scenario = "Scenario2"
     path = str(inspect.getfile(CybORG))
     path = path[:-10] + f"/Shared/Scenarios/{scenario}.yaml"
 
-    cyborg = CybORG(path, "sim", agents={"Red": red_agent})  # Comment out one
+    cyborg = CybORG(path, "sim", agents={"Red": red_agent})  
     env = BlueTableWrapper(cyborg)
 
     results = env.reset(agent="Blue")
@@ -235,6 +210,8 @@ def run_episode(
     )
     obs.del_column("Subnet")
     obs.del_column("IP Address")
+    print(f"\nInitial Observation:")
+    print(obs)
     history = f"State: \n{str(obs)}"
 
     r = []
@@ -242,61 +219,63 @@ def run_episode(
     red_actions = []
     impacts = 0
 
+    # Track parsing failures
+    api_failures = []
+    parsing_failures = []
+
     for i in tqdm(range(steps), desc="Episode steps", leave=False):
-        # Use LangChain chain to get structured output
+        conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+        conversation.extend(
+            [{"role": "user", "content": HUMAN_PROMPT.format(history=history)}]
+        )
+
         try:
-            # Get raw response first to capture what the LLM actually returns
-            raw_response = chat.invoke(
-                prompt.format_messages(
-                    history=history,
-                    format_instructions=parser.get_format_instructions()
-                )
-            )
-            response_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
-            
-            # Print the raw response
-            print(f"\n[Step {i+1}] Raw LLM Response:\n{response_text}")
-            
-            # Strip markdown code blocks if present
-            if response_text.strip().startswith('```'):
-                # Remove opening ```json or ``` and closing ```
-                lines = response_text.strip().split('\n')
-                if lines[0].startswith('```'):
-                    lines = lines[1:]  # Remove first line
-                if lines and lines[-1].strip() == '```':
-                    lines = lines[:-1]  # Remove last line
-                response_text = '\n'.join(lines)
-                print(f"[Step {i+1}] Stripped markdown, cleaned text:\n{response_text}")
-            
-            # Normalize the action field to uppercase before parsing
-            # This handles models that return lowercase actions
-            try:
-                response_json = json.loads(response_text)
-                print(f"[Step {i+1}] Parsed JSON before normalization: {response_json}")
-                if 'action' in response_json and isinstance(response_json['action'], str):
-                    response_json['action'] = response_json['action'].upper()
-                    print(f"[Step {i+1}] Normalized action to: {response_json['action']}")
-                response_text = json.dumps(response_json)
-            except json.JSONDecodeError as e:
-                # If not valid JSON, let the parser handle the error
-                print(f"[Step {i+1}] JSONDecodeError: {e}")
-                pass
-            
-            # Parse the response
-            output = parser.parse(response_text)
-            
-            print(f"[Step {i+1}] Parsed: action={output.action}, host={output.host}")
-            
-        except Exception as e:
-            print(f"\n[Step {i+1}] Error getting structured output: {e}")
-            # Fallback to MONITOR action if parsing fails
-            output = Action(
-                analyse=None,
-                action="MONITOR",
-                host="nohost",
+            response = client.responses.parse(
+                model=model,
+                temperature=1.0,
+                input=conversation,
+                text_format=Action,
             )
 
-        action = convert_model_output_to_action(output)
+            output = response.output_parsed
+            print(f"\nPlaying against Red Agent: {red_agent.__name__}")
+            # Log raw output for debugging
+            if not output:
+                api_failures.append({
+                    "step": i,
+                    "error": "output_parsed is None or empty",
+                    "response": str(response),
+                })
+                # Fallback to safe action
+                output = Action(action="MONITOR", host="nohost", reasoning="Fallback due to empty output")
+            else:
+                print(f"Step {i} model output:")
+                pprint(output.model_dump())
+                
+            action = convert_model_output_to_action(output)
+
+            # Check if action conversion was successful
+            if action is None:
+                parsing_failures.append({
+                    "step": i,
+                    "output_action": output.action if output else "None",
+                    "output_host": output.host if output else "None",
+                    "output_reasoning": output.reasoning if output else "None",
+                })
+                print(f"Parsing failure at step {i}: {output.model_dump() if output else 'No output'}")
+                # Fallback to safe action
+                action = Monitor(agent="Blue", session=0)
+                
+        except Exception as e:
+            api_failures.append({
+                "step": i,
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+            print(f"\nError at step {i}: {e}")
+            # Fallback to safe action
+            action = Monitor(agent="Blue", session=0)
+            output = None
 
         results = env.step(action=action, agent="Blue")
         obs, reward, done, action_space = (
@@ -307,50 +286,77 @@ def run_episode(
         )
         obs.del_column("Subnet")
         obs.del_column("IP Address")
-
+        
         red_action = env.get_last_action("Red")
         red_actions.append(red_action)
         if "impact" in str(red_action).lower():
             impacts += 1
 
-        history = f"{history}\nAction: {results.action}\nReward: {results.reward}\nState: {obs}"
         r.append(results.reward)
         blue_actions.append(results.action)
+        
+        # Count compromised hosts - PrettyTable object, need to parse rows
+        compromised_count = 0
+        try:
+            # PrettyTable stores data in _rows attribute
+            for row in obs._rows:
+                # Compromised column is typically at index 1 (after Hostname)
+                compromised_value = row[1] if len(row) > 1 else None
+                if compromised_value and compromised_value not in ['None', '', None]:
+                    compromised_count += 1
+        except Exception as e:
+            # Fallback to string counting if table structure is different
+            obs_str = str(obs)
+            print(f"Error parsing table rows: {e}. Falling back to string parsing.")
+            # Count only in Compromised column to avoid counting hostnames
+            if 'Compromised' in obs_str:
+                compromised_count = obs_str.count('| User ') + obs_str.count('| Privileged ')
+        
+        print(f"\nObservation after step {i}:")
+        print(f"  Blue Action: {results.action}")
+        print(f"  Red Action: {red_action}")
+        print(f"  Reward: {results.reward}")
+        print(f"  Cumulative Reward: {sum(r):.2f}")
+        print(f"  Compromised Hosts: {compromised_count}")
+        print(f"  History Length: {len(history)} chars")
+        print(f"  State:\n{obs}")
 
-    return sum(r), r, blue_actions, red_actions, impacts
+        history = f"{history}\nAction: {results.action}\nReward: {results.reward}\nState: {obs}"
+
+    return sum(r), r, blue_actions, red_actions, impacts, api_failures, parsing_failures
 
 
 if __name__ == "__main__":
-    # Load Dartmouth API key
-    loaded = load_dotenv(dotenv_path="dartmouth_key.env")
-    print("Loaded Dartmouth dotenv:", loaded)
-    chat_key = os.getenv("DARTMOUTH_CHAT_API_KEY")
-    print("Loaded Dartmouth Chat API Key:", chat_key)
+    loaded = load_dotenv(dotenv_path="openai_key.env")
+    print("Loaded OpenAI dotenv:", loaded)
+    api_key = os.getenv("OPENAI_API_KEY")
+    print("Loaded API Key:", api_key)
 
     # Create results directory if it doesn't exist
     results_dir = Path(__file__).parent / "results"
     results_dir.mkdir(exist_ok=True)
 
     # Create experiment folder under "results" with current experiment version and timestamp
-    experiment_version = "v0-0-1"
+    experiment_version = "v0-0-2"
     yearMonth = datetime.now().strftime("%Y%m")
 
     experiment_dir = results_dir / f"results_{experiment_version}_{yearMonth}"
     experiment_dir.mkdir(exist_ok=True)
 
-    # Dartmouth Chat models (adjust based on available models, free models only)
     models = [
-        # "openai.gpt-oss-120b",
-        "google.gemma-3-27b-it",
-        "mistral.mistral-medium-2508",
+        "gpt-5-nano",
+        # "gpt-4.1-nano",
+        # "gpt-4o-mini",
+        # "gpt-5-mini",
+        # "gpt-4.1-mini",
+        # "gpt-4.1",
     ]
-
     for model in models:
         temp = 1.0
-        red_agent = RedMeanderAgent
-        # red_agent = B_lineAgent
+        # red_agent = RedMeanderAgent
+        red_agent = B_lineAgent
 
-        episodes = 3
+        episodes = 1
         steps = 30
         all_rewards = []
         all_impacts = []
@@ -379,10 +385,10 @@ if __name__ == "__main__":
             print(f"Episode {episode + 1}/{episodes}")
             print(f"{'─'*60}")
 
-            total_reward, step_rewards, actions, red_actions, impacts = run_episode(
+            total_reward, step_rewards, actions, red_actions, impacts, api_failures, parsing_failures = run_episode(
                 model=model,
                 temperature=temp,
-                api_key=chat_key,  # Use Dartmouth Chat API key instead of OpenAI key
+                api_key=api_key,
                 red_agent=red_agent,
                 steps=steps,
             )
@@ -398,11 +404,18 @@ if __name__ == "__main__":
                     "actions": [str(a) for a in actions],
                     "red actions": [str(a) for a in red_actions],
                     "impacts": impacts,
+                    "api_failures": api_failures,
+                    "parsing_failures": parsing_failures,
+                    "api_failure_count": len(api_failures),
+                    "parsing_failure_count": len(parsing_failures),
+                    "failure_rate": (len(api_failures) + len(parsing_failures)) / steps,
                 }
             )
 
             print(f"\n✓ Episode {episode + 1} completed")
             print(f"  Total Reward: {total_reward:.2f}")
+            print(f"  API Failures: {len(api_failures)}/{steps}")
+            print(f"  Parsing Failures: {len(parsing_failures)}/{steps}")
             print(f"  Step Rewards: {step_rewards}")
 
         # Calculate statistics

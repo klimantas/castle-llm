@@ -11,6 +11,7 @@ data/
 profiles/
 venv/*
 venv
+.pixi/
 
 CybORG\.egg-info/
 
@@ -31,3 +32,6 @@ CybORG/Emulator/AWS/Config/awsconfig.ini
 *.swp
 openai_key.env
 *.env
+# pixi environments
+.pixi/*
+!.pixi/config.toml
