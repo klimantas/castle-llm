@@ -65,7 +65,7 @@ def main():
         )
         
         # Run evaluation
-        runner = EvaluationRunner(agent, experiment_version="v0-0-2")
+        runner = EvaluationRunner(agent, experiment_version="v0-0-3")
         runner.run_evaluation(
             model_name=model,
             temperature=temperature,
